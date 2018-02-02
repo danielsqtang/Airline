@@ -1,0 +1,578 @@
+!connect jdbc:hive2://ec2-52-207-2-108.compute-1.amazonaws.com:10000/default;principal=hive/ec2-52-207-2-108.compute-1.amazonaws.com@SOLRS.NET;
+--2003 and 2004 table
+CREATE TABLE airtrafficlanding
+(
+Year int,
+Month int,
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNum int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/airtraffic_yearly_internal'
+TBLPROPERTIES ('skip.header.line.count'='1');
+
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp --query "select * from airtraffic_control where Year=2003 and \$CONDITIONS" --split-by Year --m 1 --delete-target-dir --target-dir /user/daniel/project/sqoop/airtraffic_yearly_internal
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp --query "select * from airtraffic_control where Year=2004 and \$CONDITIONS" --split-by Year --m 1 --incremental append --check-column Year --target-dir /user/daniel/project/sqoop/airtraffic_yearly_internal
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp --query "select * from airtraffic_control where Year=2005 and \$CONDITIONS" --split-by Year --m 1 --target-dir /user/daniel/project/sqoop/airtraffic_yearly_2005
+load data inpath '/user/daniel/project/sqoop/airtraffic_yearly_internal/part-m-*' into table airtrafficlanding;
+CREATE TABLE IF NOT EXISTS airtraffic_yearly_internal
+(
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNumber int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+PARTITIONED BY
+(
+year int,
+month int
+)
+CLUSTERED BY (DayofMonth) INTO 15 BUCKETS
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS PARQUET
+LOCATION '/user/daniel/project/airtraffic_yearly_internal/'
+TBLPROPERTIES ('PARQEUT.COMPRESS'='SNAPPY');
+
+SET hive.exec.dynamic.partition=true;
+SET hive.exec.dynamic.partition.mode=nonstrict;
+set hive.enforce.bucketing = true;
+INSERT OVERWRITE TABLE airtraffic_yearly_internal PARTITION(Year, Month) 
+SELECT DayofMonth, DayOfWeek, DepTime, CRSDepTime, ArrTime, CRSArrTime, UniqueCarrier, FlightNum, TailNum, 
+ActualElapsedTime, CRSElapsedTime, AirTime, ArrDelay, DepDelay, Origin, Dest, Distance, TaxiIn, TaxiOut, 
+Cancelled, CancellationCode, Diverted, CarrierDelay, WeatherDelay, NASDelay, SecurityDelay, LateAircraftDelay, Year, Month 
+FROM airtrafficlanding;
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp 
+--query "select Year,Month,DayofMonth,UniqueCarrier,FlightNum,TailNum,Origin,Dest,Cancelled,CancellationCode,TaxiIn,TaxiOut,Diverted from airtraffic_control where Year=2003 and \$CONDITIONS" 
+--split-by Year --m 2 --hbase-table airtraffic_yearly_hbase --column-family CF_AIRLINE 
+--hbase-row-key Year,Month,DayofMonth,FlightNum,TailNum 
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp 
+--query "select Year,Month,DayofMonth,DayOfWeek,DepTime,CRSDepTime,ArrTime,CRSArrTime,FlightNum,TailNum,ActualElapsedTime,CRSElapsedTime,AirTime,ArrDelay,DepDelay,Distance from airtraffic_control where Year=2003 and \$CONDITIONS" 
+--split-by Year --m 2 --hbase-table airtraffic_yearly_hbase --column-family CF_TIME_AND_DISTANCE --hbase-row-key Year,Month,DayofMonth,FlightNum,TailNum 
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp 
+--query "select Year,Month,DayofMonth,UniqueCarrier,FlightNum,TailNum,CarrierDelay,WeatherDelay,NASDelay,SecurityDelay,LateAircraftDelay from airtraffic_control where Year=2003 and \$CONDITIONS" 
+--split-by Year --m 2 --hbase-table airtraffic_yearly_hbase --column-family CF_WEATHER --hbase-row-key Year,Month,DayofMonth,FlightNum,TailNum 
+
+--Airport_1 and Carriers
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp --table airports_1 --m 1 --target-dir /user/daniel/project/sqoop/airport_1 --hive-import --create-hive-table --hive-table daniel_db:airport_1
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp --table carriers --m 1 --target-dir /user/daniel/project/sqoop/carriers --hive-import --create-hive-table --hive-table carriers
+
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_airport_1
+(
+iata string,
+airport string,
+city string,
+state string,
+country string,
+lat decimal,
+long decimal
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ''
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/sqoop/airports_1/';
+LOad data inpath '/user/daniel/project/sqoop/airport_1/copy/part-m*' into table airtraffic_airport_1;
+
+CREATE EXTERNAL TABLE airtraffic_carriers 
+(
+code string,
+description string
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ''
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/sqoop/carriers';
+
+hdfs dfs -mkdir /user/daniel/project/local_data
+hdfs dfs -put /sollers/big_data_eng/airtraffic_control/datasets/facts/2006.csv /user/daniel/project/local_data
+hdfs dfs -chmod 777 /user/daniel/project/local_data/2006.csv
+
+CREATE TABLE airtrafficstaging_2006
+(
+Year int,
+Month int,
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNum int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/local_data'
+TBLPROPERTIES ('skip.header.line.count'='1');
+
+load data inpath '/user/daniel/project/local_data/20*' into table airtrafficstaging_2006;
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_yearly_external
+(
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNumber int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+PARTITIONED BY
+(
+year int,
+month int
+)
+CLUSTERED BY (DayofMonth) INTO 15 BUCKETS
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS PARQUET
+LOCATION '/user/daniel/project/airtraffic_yearly_external/'
+TBLPROPERTIES ('PARQEUT.COMPRESS'='SNAPPY');
+
+INSERT OVERWRITE TABLE airtraffic_yearly_external PARTITION(Year, Month) SELECT DayofMonth, DayOfWeek, DepTime, CRSDepTime, ArrTime, CRSArrTime, UniqueCarrier, FlightNum, TailNum, ActualElapsedTime, CRSElapsedTime, AirTime, ArrDelay, DepDelay, Origin, Dest, Distance, TaxiIn, TaxiOut, Cancelled, CancellationCode, Diverted, CarrierDelay, WeatherDelay, NASDelay, SecurityDelay, LateAircraftDelay, Year, Month FROM airtrafficstaging_2006;
+
+hdfs dfs -put /sollers/big_data_eng/airtraffic_control/datasets/dimensions/airports_2.csv /user/daniel/project/local_data
+hdfs dfs -put /sollers/big_data_eng/airtraffic_control/datasets/dimensions/plane-data.csv /user/daniel/project/local_data
+
+iata,airport,city,state,country,lat,long
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_airport_2
+(
+iata string,
+airport string,
+city string,
+state string,
+country string,
+lat decimal,
+long decimal
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/local_data/airports_2/'
+TBLPROPERTIES ('skip.header.line.count'='1');
+
+tailnum,type,manufacturer,issue_date,model,status,aircraft_type,engine_type,year
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_plane_data
+(
+tailnum string,
+type string,
+manufacturer string,
+issue_date string,
+model string,
+status string,
+aircraft_type string,
+engine_type string,
+year int
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/local_data/plane-data/'
+TBLPROPERTIES ('skip.header.line.count'='1');
+
+//set hive.cli.print.header=true;
+//INSERT OVERWRITE LOCAL DIRECTORY '/user/daniel/project/hbase' 
+ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY '\t' 
+select * from airtraffic_yearly_internal WHERE Year=2004;
+run command outside hbase shell (main linux line)
+//org.apache.hadoop.hbase.mapreduce.ImportTsv -Dimporttsv.columns="HBASE_ROW_KEY,CF_AIRLINE:name,CF_TIME_AND_DISTANCE:movieName,CF_WEATHER:movieYear" 
+//daniel:airtraffic_yearly_hbase /user/movies/movies.tsv 
+
+--CLEANSING
+insert overwrite table airtraffic_plane_data select distinct * from airtraffic_plane_data;
+create table airtraffic_plane_data_tmp as select * from airtraffic_plane_data where manufacturer is not null;
+//ALTER TABLE airtraffic_plane_data_tmp SET TBLPROPERTIES('serialization.null.format'='');
+insert overwrite table airtraffic_plane_data select * from airtraffic_plane_data_tmp;
+insert overwrite table airtraffic_carriers select * from airtraffic_carriers where LENGTH(code) < 4;
+select regexp_replace(Description,'/','\-') from airtraffic_carriers;
+//TRANFORMATION
+CREATE TABLE IF NOT EXISTS airtraffic_plane_data_avro
+(
+tailnum string,
+type string,
+manufacturer string,
+issue_date string,
+model string,
+status string,
+aircraft_type string,
+engine_type string,
+year int
+)
+STORED AS AVRO;
+INSERT OVERWRITE TABLE airtraffic_plane_data_avro SELECT * FROM airtraffic_plane_data;
+
+add jar /sollers/big_data_eng/jars;--permissions error
+--restart hive cluster to initiate jar file
+
+create table airtraffic_airport as
+select * from airtraffic_airport_1
+union all
+select * from airtraffic_airport_2;
+//STAGING
+INSERT OVERWRITE DIRECTORY '/user/daniel/project/staging/airtraffic_airport'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+select * from airtraffic_airport;
+
+INSERT OVERWRITE DIRECTORY '/user/daniel/project/staging/airtraffic_yearly_internal'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS PARQUET
+select * from airtraffic_yearly_internal;
+
+INSERT OVERWRITE DIRECTORY '/user/daniel/project/staging/airtraffic_yearly_external'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS PARQUET
+select * from airtraffic_yearly_external;
+
+INSERT OVERWRITE DIRECTORY '/user/daniel/project/staging/airtraffic_plane_data'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+select * from airtraffic_plane_data_avro;
+
+INSERT OVERWRITE DIRECTORY '/user/daniel/project/staging/airtraffic_carriers'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+select * from airtraffic_carriers;
+
+--2005 sqoop import
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_yearly_2005
+(
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNumber int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+PARTITIONED BY
+(
+year int,
+month int
+)
+CLUSTERED BY (DayofMonth) INTO 15 BUCKETS
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS PARQUET
+LOCATION '/user/daniel/project/sqoop/airtraffic_yearly_2005/'
+TBLPROPERTIES ('PARQEUT.COMPRESS'='SNAPPY');
+
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_yearly_2005_staging
+(
+Year int,
+Month int,
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNumber int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/sqoop/airtraffic_yearly_2005_staging/'
+TBLPROPERTIES ('skip.header.line.count'='1');
+
+sqoop import --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp --query "select * from airtraffic_control where Year=2005 and \$CONDITIONS" --split-by Year --m 1 --delete-target-dir --target-dir /user/daniel/project/sqoop/airtraffic_yearly_2005
+load data inpath '/user/daniel/project/sqoop/airtraffic_yearly_2005/part-m-*' into table airtraffic_yearly_2005_staging;
+INSERT OVERWRITE TABLE airtraffic_yearly_2005 PARTITION(Year, Month) SELECT DayofMonth, DayOfWeek, DepTime, CRSDepTime, ArrTime, CRSArrTime, UniqueCarrier, FlightNumber as FlightNum, TailNum, ActualElapsedTime, CRSElapsedTime, AirTime, ArrDelay, DepDelay, Origin, Dest, Distance, TaxiIn, TaxiOut, Cancelled, CancellationCode, Diverted, CarrierDelay, WeatherDelay, NASDelay, SecurityDelay, LateAircraftDelay, Year, Month FROM airtraffic_yearly_2005_staging;
+
+--2003 to 2007
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_yearly
+(
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNumber int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+PARTITIONED BY
+(
+year int,
+month int
+)
+CLUSTERED BY (DayofMonth) INTO 15 BUCKETS
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS PARQUET
+LOCATION '/user/daniel/project/sqoop/airtraffic_yearly'
+TBLPROPERTIES ('PARQEUT.COMPRESS'='SNAPPY');
+
+INSERT INTO TABLE airtraffic_yearly PARTITION(Year,Month) SELECT * FROM airtraffic_yearly_internal;
+INSERT INTO TABLE airtraffic_yearly PARTITION(Year,Month) SELECT * FROM airtraffic_yearly_2005;
+INSERT INTO TABLE airtraffic_yearly PARTITION(Year,Month) SELECT * FROM airtraffic_yearly_external;
+INSERT INTO TABLE airtraffic_yearly PARTITION(Year,Month) SELECT * FROM airtraffic_yearly_2008;
+
+Dropped the 2003 partition file in HDFS
+Exchange partition option
+
+--2008 data
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_yearly_2008
+(
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNumber int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+PARTITIONED BY
+(
+year int,
+month int
+)
+CLUSTERED BY (DayofMonth) INTO 15 BUCKETS
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS PARQUET
+LOCATION '/user/daniel/project/sqoop/airtraffic_yearly_2008/'
+TBLPROPERTIES ('PARQEUT.COMPRESS'='SNAPPY');
+
+CREATE EXTERNAL TABLE IF NOT EXISTS airtraffic_yearly_2008_staging
+(
+Year int,
+Month int,
+DayofMonth int,
+DayOfWeek int,
+DepTime int,
+CRSDepTime int,
+ArrTime int,
+CRSArrTime int,
+UniqueCarrier string,
+FlightNumber int,
+TailNum string,
+ActualElapsedTime int,
+CRSElapsedTime int,
+AirTime int,
+ArrDelay int,
+DepDelay int,
+Origin string,
+Dest string,
+Distance int,
+TaxiIn int,
+TaxiOut int,
+Cancelled int,
+CancellationCode string,
+Diverted int,
+CarrierDelay int,
+WeatherDelay int,
+NASDelay int,
+SecurityDelay int,
+LateAircraftDelay int
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/daniel/project/local_data/airtraffic_yearly_2008_staging'
+TBLPROPERTIES ('skip.header.line.count'='1');
+
+INSERT OVERWRITE TABLE airtraffic_yearly_2008 PARTITION(Year, Month) SELECT DayofMonth, DayOfWeek, DepTime, CRSDepTime, ArrTime, CRSArrTime, UniqueCarrier, FlightNumber as FlightNum, TailNum, ActualElapsedTime, CRSElapsedTime, AirTime, ArrDelay, DepDelay, Origin, Dest, Distance, TaxiIn, TaxiOut, Cancelled, CancellationCode, Diverted, CarrierDelay, WeatherDelay, NASDelay, SecurityDelay, LateAircraftDelay, Year, Month FROM airtraffic_yearly_2008_staging;
+
+sqoop export --connect jdbc:mysql://52.207.2.108/Airline --username temp --password temp --table airtraffic_yearly --export-dir /bde_db/daniel_airtraffic_yearly
+
+--Rollback process
+--ADD 2003 December data, REMOVE 2008 December data.
+--Shellscript
+show partitions airtraffic_yearly;
+list of partitions
+sort
+check how many partitions are there with count
+if < 60, load else ignore
+if > 60, drop partition and hdfs dfs -rm
+else load data
+beeline -u !connect jdbc:hive2://ec2-52-207-2-108.compute-1.amazonaws.com:10000/default;principal=hive/ec2-52-207-2-108.compute-1.amazonaws.com@SOLRS.NET QUERY
+--ADD the rest of 2003 data, REMOVE the rest of 2008 data
+
